@@ -12,60 +12,72 @@ module RPG
 
   class Scene < Ray::Scene
     scene_name :rpg_scene
+    # need to derive map size
 
     def setup
       player_img = Ray::Sprite.new path_of('player_sheet.png')
       player_img.sheet_size = [4, 2]
       player_img.sheet_pos = [0, 0]
       @player = player_img
-      width, height = window.size.to_a
-      @screen_rect = Ray::Rect[0, 0, width, height]
-
-
-      @player.y = (height / 2) - 25
-
-
-      @player.x = 30
       @map  = Map.new(path_of "main_map2.tmx")
+      @player.x = @map.max_x / 2 
+      @player.y = @map.max_y / 2 
+
+      @camera = Ray::View.new @player.pos, window.size 
+      @half_size = window.size / 2 
     end
 
 
     def register
-      self.loops_per_second = 60
+      self.loops_per_second = 30
       always do
         if animations.empty? 
           if holding? key(:down)
             animations << sprite_animation(:from => [0, 0], :to => [0, 1],
                                            :duration => 0.3).start(@player) 
-            animations << translation(:of => [0, 10], :duration => 0.3).start(@player)
+            animations << translation(:of => [0, 20], :duration => 0.3).start(@player)
+            @player.y += 1
           elsif holding? key(:up)
             animations << sprite_animation(:from => [1, 0], :to => [1, 1],
                                            :duration => 0.3).start(@player) 
-            animations << translation(:of => [0, -10], :duration => 0.3).start(@player)
+            animations << translation(:of => [0, -20], :duration => 0.3).start(@player)
+            @player.y -= 1
           elsif holding? key(:right) 
             @player.flip_x = true 
             animations << sprite_animation(:from => [2, 0], :to => [3, 0],
                                            :duration => 0.3).start(@player) 
-            animations << translation(:of => [10, 0], :duration => 0.3).start(@player)
+            animations << translation(:of => [20, 0], :duration => 0.3).start(@player)
+            @player.x += 1
           elsif holding? key(:left)
             @player.flip_x = false 
             animations << sprite_animation(:from => [2, 0], :to => [3, 0],
                                            :duration => 0.3).start(@player) 
-            animations << translation(:of => [-10, 0], :duration => 0.3).start(@player)
+            animations << translation(:of => [-20, 0], :duration => 0.3).start(@player)
+            @player.x -= 1
           end
 
         end
 
+        camera_x = @player.x
+        camera_y = @player.y
+        @camera.center = [camera_x, camera_y] 
       end
     end
 
     def render(win)
 
-      @map.each_tile {|tile| win.draw tile}
+      win.with_view @camera do 
 
+      @map.each_tile(@camera) do |tile|
+
+        win.draw tile 
+
+      end
+        
 
       win.draw @player
 
+      end
     end
   end
 
@@ -80,14 +92,20 @@ module RPG
       @tmx.layers.each do |l|
         layer_to_tiles(l)
       end
+      @max_x *= 8
+      @max_y *= 8 
     end
 
     def layer_to_tiles(layer)
       tiles = {}
-      layer.data.each_slice(@tmx.width).with_index do |line, y|
+      layer.data.each_slice(@tmx.width).with_index do |line, y| 
+        @max_y = y 
         line.each_with_index  do |t, x|
-          tiles[[x, y]] = Ray::Sprite.new(@tileset_img, :at => [x * 8, y * 8])
+          @max_x = x
+
           unless t == 0
+          tiles[[x, y]] = Ray::Sprite.new(@tileset_img, :at => [x * 8, y * 8])
+
            coord_y, coord_x = @tileset_grid[t] 
            tiles[[x, y]].sub_rect = [coord_x, coord_y, 8, 8]
           end
@@ -100,14 +118,24 @@ module RPG
       @layers.each { |l| yield l}
     end
 
-    def each_tile
+    def each_tile(camera)
+      vx, vy = [80, 60] #tiles
+      cx, cy = [camera.x / 8, camera.y / 8].map(&:to_i)
       each_layer do |l|
-        l.each {|_,tile| yield tile }
+        ((cx - vx)..(cx + vx)).each do |x|
+          ((cy - vy)..(cy + vy)).each do |y|
+
+            yield l[[x, y]] if l[[x, y]]
+           
+
+          end
+        end
       end
     end
 
-    def solid?(x, y)
-      y < 0 || @tiles[[x.to_i / TileSize, y.to_i / TileSize]]
+    def visible?(x, y)
+
+      #y < 0 || @tiles[[x.to_i / TileSize, y.to_i / TileSize]]
     end
 
     attr_reader :max_x, :max_y
@@ -139,6 +167,7 @@ module RPG
 
     def register
       add_hook :quit, method(:exit!)
+
     end
   end
 end
