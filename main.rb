@@ -15,15 +15,16 @@ module RPG
     # need to derive map size
 
     def setup
-      player_img = Ray::Sprite.new path_of('player_sheet.png')
-      player_img.sheet_size = [4, 2]
-      player_img.sheet_pos = [0, 0]
-      @player = player_img
-      @map  = Map.new(path_of "main_map2.tmx")
-      @player.x = @map.max_x / 2 
-      @player.y = @map.max_y / 2 
+      @map_music  = music(path_of('FFVII_main_theme.ogg'))
+      @map_music.looping = true
+      @map_music.pitch = 0.5
+      @map_music.play 
 
+      @map  = Map.new(path_of "main_map2.tmx")
+
+      @player = Player.new((@map.max_x / 2), (@map.max_y/2))
       @camera = Ray::View.new @player.pos, window.size 
+
       @half_size = window.size / 2 
     end
 
@@ -32,34 +33,23 @@ module RPG
       self.loops_per_second = 30
       always do
         if animations.empty? 
-          if holding? key(:down)
-            animations << sprite_animation(:from => [0, 0], :to => [0, 1],
-                                           :duration => 0.3).start(@player) 
-            animations << translation(:of => [0, 20], :duration => 0.3).start(@player)
-            @player.y += 1
+          if holding? key(:down) 
+            @player.move(:down, self)
           elsif holding? key(:up)
-            animations << sprite_animation(:from => [1, 0], :to => [1, 1],
-                                           :duration => 0.3).start(@player) 
-            animations << translation(:of => [0, -20], :duration => 0.3).start(@player)
-            @player.y -= 1
-          elsif holding? key(:right) 
-            @player.flip_x = true 
-            animations << sprite_animation(:from => [2, 0], :to => [3, 0],
-                                           :duration => 0.3).start(@player) 
-            animations << translation(:of => [20, 0], :duration => 0.3).start(@player)
-            @player.x += 1
-          elsif holding? key(:left)
-            @player.flip_x = false 
-            animations << sprite_animation(:from => [2, 0], :to => [3, 0],
-                                           :duration => 0.3).start(@player) 
-            animations << translation(:of => [-20, 0], :duration => 0.3).start(@player)
-            @player.x -= 1
+            @player.move(:up, self)
+          elsif holding? key(:right)  
+            @player.move(:right, self)
+          elsif holding? key(:left) 
+            @player.move(:left, self)
           end
-
         end
 
-        camera_x = @player.x
-        camera_y = @player.y
+        p_max_x =  [@player.x, @half_size.w].max
+        p_max_y =  [@player.y, @half_size.y].max
+
+        camera_x =[p_max_x, @map.max_x - @half_size.w ].min
+        camera_y =[p_max_y, @map.max_y - @half_size.h].min
+
         @camera.center = [camera_x, camera_y] 
       end
     end
@@ -68,17 +58,54 @@ module RPG
 
       win.with_view @camera do 
 
-      @map.each_tile(@camera) do |tile|
-
-        win.draw tile 
-
-      end
-        
-
-      win.draw @player
+        @map.each_tile(@camera) do |tile|
+          win.draw tile 
+        end
+        win.draw @player.player
 
       end
     end
+  end
+
+  class Player
+    require 'forwardable'
+    extend Forwardable
+    attr_accessor :player
+    def_delegators :@player, :x, :y, :pos
+    ANIMATION_DURATION = 0.3
+
+    def initialize(pos_x, pos_y)
+      player_img = Ray::Sprite.new path_of('player_sheet.png')
+      player_img.sheet_size = [4, 2]
+      player_img.sheet_pos = [0, 0]
+      @player = player_img
+      @player.x = pos_x
+      @player.y =  pos_y 
+    end
+
+    def move(dir, scene)
+      flip_x = false
+      case dir
+      when :down
+        from, to = [[0, 0], [0, 1]]
+        of = [0, 21]
+      when :up
+        from, to = [[1, 0], [1, 1]]
+        of = [0, -21]
+      when :left
+        from, to = [[2, 0], [3, 0]]
+        of = [-21, 0]
+      when :right
+        flip_x = true
+        from, to = [[2, 0], [3, 0]]
+        of = [21, 0]
+      end
+      @player.flip_x  = flip_x 
+      scene.animations << scene.sprite_animation(:from => from, :to => to,
+                                     :duration => ANIMATION_DURATION).start(@player) 
+      scene.animations << scene.translation(:of => of, :duration => ANIMATION_DURATION).start(@player)
+    end
+
   end
 
   class Map
@@ -104,10 +131,10 @@ module RPG
           @max_x = x
 
           unless t == 0
-          tiles[[x, y]] = Ray::Sprite.new(@tileset_img, :at => [x * 8, y * 8])
+            tiles[[x, y]] = Ray::Sprite.new(@tileset_img, :at => [x * 8, y * 8])
 
-           coord_y, coord_x = @tileset_grid[t] 
-           tiles[[x, y]].sub_rect = [coord_x, coord_y, 8, 8]
+            coord_y, coord_x = @tileset_grid[t] 
+            tiles[[x, y]].sub_rect = [coord_x, coord_y, 8, 8]
           end
         end
       end
@@ -126,7 +153,7 @@ module RPG
           ((cy - vy)..(cy + vy)).each do |y|
 
             yield l[[x, y]] if l[[x, y]]
-           
+
 
           end
         end
@@ -134,7 +161,6 @@ module RPG
     end
 
     def visible?(x, y)
-
       #y < 0 || @tiles[[x.to_i / TileSize, y.to_i / TileSize]]
     end
 
@@ -160,7 +186,6 @@ module RPG
   class Game < Ray::Game
     def initialize
       super("RPG ")
-
       Scene.bind(self)
       push_scene :rpg_scene
     end
