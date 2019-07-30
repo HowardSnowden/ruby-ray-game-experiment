@@ -23,36 +23,32 @@ module RPG
       @map  = Map.new(path_of "main_map2.tmx")
 
       @player = Player.new((@map.max_x / 2), (@map.max_y/2))
+      @enemies = [] 
+      10.times do  
+        @enemies << Enemy.new((@map.max_x / rand(1..4)) - rand(1..100), (@map.max_y/2 - rand(1..4)) + rand(1..100)) 
+      end
       @camera = Ray::View.new @player.pos, window.size 
 
       @half_size = window.size / 2 
     end
 
-
     def register
-      self.loops_per_second = 30
-      always do
-        if animations.empty? 
-          if holding? key(:down) 
-            @player.move(:down, self)
-          elsif holding? key(:up)
-            @player.move(:up, self)
-          elsif holding? key(:right)  
-            @player.move(:right, self)
-          elsif holding? key(:left) 
-            @player.move(:left, self)
-          end
-        end
+     @player.register self
+    
+     always do 
+      @player.update
+      @enemies.map(&:update)
+      p_max_x =  [@player.x, @half_size.w].max
+      p_max_y =  [@player.y, @half_size.y].max
 
-        p_max_x =  [@player.x, @half_size.w].max
-        p_max_y =  [@player.y, @half_size.y].max
+      camera_x =[p_max_x, @map.max_x - @half_size.w ].min
+      camera_y =[p_max_y, @map.max_y - @half_size.h].min
 
-        camera_x =[p_max_x, @map.max_x - @half_size.w ].min
-        camera_y =[p_max_y, @map.max_y - @half_size.h].min
+      @camera.center = [camera_x, camera_y] 
+     end
 
-        @camera.center = [camera_x, camera_y] 
-      end
     end
+
 
     def render(win)
 
@@ -61,52 +57,185 @@ module RPG
         @map.each_tile(@camera) do |tile|
           win.draw tile 
         end
-        win.draw @player.player
+        win.draw @player.sprite
+        @enemies.map {|v| win.draw v.sprite }
 
       end
     end
   end
 
   class Player
+    include Ray::Helper
     require 'forwardable'
     extend Forwardable
-    attr_accessor :player
-    def_delegators :@player, :x, :y, :pos
-    ANIMATION_DURATION = 0.3
+    attr_reader :sprite, :window
+    def_delegators :@sprite, :x, :y, :pos
+    ANIMATION_DURATION = 0.3 
+    MOVESPEED = 5
 
     def initialize(pos_x, pos_y)
       player_img = Ray::Sprite.new path_of('player_sheet.png')
       player_img.sheet_size = [4, 2]
       player_img.sheet_pos = [0, 0]
-      @player = player_img
-      @player.x = pos_x
-      @player.y =  pos_y 
+      @sprite = player_img
+      @sprite.x = pos_x
+      @sprite.y =  pos_y 
+      @animations = {}
+      [:up, :down, :left, :right].each  do |v|
+        @animations[v]  = move_animations(v)
+        @animations[v].pause
+      end
+    end
+   def register(scene)
+      @window = scene.window
+      self.event_runner = scene.event_runner
+
+      @animations.each do |key, animation|
+        animation.event_runner = event_runner
+        on :animation_end, animation do 
+          animation.start @sprite
+        end
+      end
+   end
+
+    def update 
+      
+      if holding? :left
+        @animations[:left].resume if @animations[:left].paused?
+       @sprite.flip_x = false 
+
+        @animations[:left].update
+        @sprite.x -= MOVESPEED 
+      elsif  holding? :right 
+        @animations[:right].resume if @animations[:right].paused?
+        @animations[:right].update
+        @sprite.flip_x = true
+        @sprite.x += MOVESPEED 
+      elsif  holding? :up
+        @animations[:up].resume if @animations[:up].paused?
+        @animations[:up].update
+
+        @sprite.y -= MOVESPEED 
+      elsif holding? :down
+        @animations[:down].resume if @animations[:down].paused?
+        @animations[:down].update
+        @sprite.y += MOVESPEED 
+      else
+        @animations.each do |key, animation|
+          animation.pause unless animation.paused?
+        end
+      end 
+
     end
 
-    def move(dir, scene)
-      flip_x = false
+    def move_animations(dir)
       case dir
       when :down
         from, to = [[0, 0], [0, 1]]
-        of = [0, 21]
       when :up
         from, to = [[1, 0], [1, 1]]
-        of = [0, -21]
       when :left
         from, to = [[2, 0], [3, 0]]
-        of = [-21, 0]
+      when :right
+        from, to = [[2, 0], [3, 0]]
+      end
+      sprite_animation(:from => from, :to => to,
+                             :duration => ANIMATION_DURATION).start(@sprite)
+    end
+  end
+
+  class Enemy
+    include Ray::Helper
+    require 'forwardable'
+    extend Forwardable
+    attr_accessor :sprite
+    def_delegators :@sprite, :x, :y, :pos
+    ANIMATION_DURATION = 0.3
+    MOVESPEED = 3  
+
+    def initialize(pos_x, pos_y)
+      player_img = Ray::Sprite.new path_of('enemy_sheet.png')
+      player_img.sheet_size = [4, 1]
+      player_img.sheet_pos = [0, 0]
+      @sprite = player_img
+      @route_pos = 0
+      @patrol_route = %w{u-10 s-5 d-10 s-10 d-5} 
+      @sprite.x = pos_x
+      @sprite.y =  pos_y 
+      @animations = {}
+      [:up, :down, :left, :right].each  do |v|
+        @animations[v]  = move_animations(v)
+        @animations[v].pause
+      end
+     
+    end
+
+    def register(scene)
+      @window = scene.window
+      self.event_runner = scene.event_runner
+
+      @animations.each do |key, animation|
+        animation.event_runner = event_runner
+        on :animation_end, animation do 
+          animation.start @sprite
+        end
+      end
+  
+    end
+
+   def update
+     patrol  
+   end
+
+   def patrol
+     @route = @patrol_route[@route_pos]
+     route = @route.split('-') 
+     @movements ||= route[1].to_i
+     @dir = route[0]
+     @movements -= 1 unless @movements == 0
+     @route_pos += 1 if @movements == 0
+     @route_pos = 0  unless @patrol_route[@route_pos]
+     
+     if @dir == 'u'
+      @animations[:up].resume if @animations[:up].paused?
+      @animations[:up].update
+      @animations[:down].pause
+      @sprite.y -= MOVESPEED 
+     
+     elsif @dir == 'd'
+       @animations[:down].resume if @animations[:down].paused?
+       @animations[:down].update
+       @animations[:up].pause
+       @sprite.y += MOVESPEED 
+
+     elsif @dir == 's'
+       @animations.each do |key, animation|
+         animation.pause unless animation.paused?
+       end
+     end
+ 
+     @movements = nil if @movements == 0
+   end
+
+    def move_animations(dir)
+      case dir
+      when :down
+        from, to = [[0, 0], [0, 0]]
+      when :up
+        from, to = [[1, 0], [1, 0]]
+      when :left
+        from, to = [[2, 0], [3, 0]]
       when :right
         flip_x = true
         from, to = [[2, 0], [3, 0]]
-        of = [21, 0]
       end
-      @player.flip_x  = flip_x 
-      scene.animations << scene.sprite_animation(:from => from, :to => to,
-                                     :duration => ANIMATION_DURATION).start(@player) 
-      scene.animations << scene.translation(:of => of, :duration => ANIMATION_DURATION).start(@player)
+      sprite_animation(:from => from, :to => to,
+         :duration => ANIMATION_DURATION).start(@sprite) 
     end
 
   end
+
+
 
   class Map
 
